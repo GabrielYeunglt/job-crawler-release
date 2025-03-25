@@ -76,6 +76,14 @@ service.Crawl("output.csv"); // Optional file name
 
 ---
 
+## 📌 Notice
+
+This project is provided as a **demonstration of work and coding ability**. It is not intended for actual use, distribution, or interaction with live services.
+
+The configuration files and credentials required to run the project have been intentionally excluded to prevent unintended access to third-party services.
+
+---
+
 ## ⚠️ Disclaimer
 
 This project is intended for educational and personal use only.
@@ -85,4 +93,3 @@ JobCrawler may interact with third-party websites (e.g., job boards) in ways tha
 The author assumes no liability for misuse or damages resulting from the use of this tool. Use at your own risk.
 
 If you are the owner or representative of a site and have concerns about this project, please open an issue or contact the maintainer directly.
-

@@ -1,0 +1,31 @@
+# Build folders
+**/bin/
+**/obj/
+**/dist/
+**/build/
+**/out/
+
+# Node
+node_modules/
+
+# Environment & Configs
+.env
+*.config.json
+Configs/
+
+# IDE files
+/.idea/
+/*.iml
+*.shelf/
+/workspace.xml
+/projectSettingsUpdater.xml
+/contentModel.xml
+/modules.xml
+
+# Editor-based HTTP Client requests
+/httpRequests/
+
+# Datasource local storage
+/dataSources/
+/dataSources.local.xml
+

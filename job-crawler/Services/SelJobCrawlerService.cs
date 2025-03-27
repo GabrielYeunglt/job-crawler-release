@@ -9,7 +9,7 @@ namespace job_crawler.Services;
 public class SelJobCrawlerService : IDisposable
 {
     private static readonly Random random = new();
-    private readonly bool debug = false;
+    private readonly bool debug = true;
     private bool disposed;
     private readonly IWebDriver driver;
 
@@ -34,7 +34,7 @@ public class SelJobCrawlerService : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    public List<Job> Crawl(IJobSiteParser parser, List<Job> existingJobs)
+    public List<Job> Crawl(IJobSiteParser parser, HashSet<string> existingJobs)
     {
         parser.Login(driver);
 
@@ -62,11 +62,14 @@ public class SelJobCrawlerService : IDisposable
                 Thread.Sleep(random.Next(3000, 7000));
             }
         } while (hasMorePages);
-        
-        // Deduplicate
-        jobs = jobs.Where(job => !existingJobs.Contains(job)).GroupBy(job => job.ID).Select(group => group.First()).ToList();
 
-        foreach (var job in jobs)
+        // Deduplicate
+        var deduplicatedJobs = jobs
+            .Where(job => !existingJobs.Contains($"{job.Site}:{job.ID}"))
+            .ToList();
+
+
+        foreach (var job in deduplicatedJobs)
         {
             parser.EnrichJobDetails(driver, job);
             analyzeService.AnalyzeJob(job);
@@ -74,44 +77,24 @@ public class SelJobCrawlerService : IDisposable
             {
                 break;
             }
+
             Thread.Sleep(random.Next(1000, 5000));
         }
 
-        jobs.Sort((a, b) => b.Score.CompareTo(a.Score));
-        return jobs;
+        deduplicatedJobs.Sort((a, b) => b.Score.CompareTo(a.Score));
+        return deduplicatedJobs;
     }
 
     public void Crawl(string filepath = "crawled")
     {
-        // Read old records so that new one don't have to be processed again
-        List<Job> old_records = new();
-        var existingFiles = FileLibrary.GetCsvFilesFromDirectory(FileLibrary.DEFAULT_PATH);
-        foreach (var file in existingFiles)
-        {
-            var records = FileLibrary.ReadJobsFromCsv(file);
-            if (records != null)
-            {
-                old_records.AddRange(records);
-            }
-        }
-        old_records = old_records.Distinct().ToList();
-        
+        var oldRecords = FileLibrary.SaveHandler.LoadJobIndexLine();
         var jobs = new List<Job>();
-        var indeedJobs = Crawl(new IndeedJobSiteParser(), old_records);
+        var indeedJobs = Crawl(new IndeedJobSiteParser(), oldRecords);
         if (indeedJobs.Any()) jobs.AddRange(indeedJobs);
-        var linkedinJobs = Crawl(new LinkedInJobSiteParser(), old_records);
+        var linkedinJobs = Crawl(new LinkedInJobSiteParser(), oldRecords);
         if (linkedinJobs.Any()) jobs.AddRange(linkedinJobs);
         jobs.Sort((a, b) => b.Score.CompareTo(a.Score));
-        SaveJobsToCSV(jobs, filepath);
-    }
-
-    private static void SaveJobsToCSV(List<Job> jobs, string filename)
-    {
-        using var writer = new StreamWriter(filename);
-        writer.WriteLine($"{DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")}");
-        writer.WriteLine("Title,Company,Site,Location,Score,Link,ID");
-
-        foreach (var job in jobs)
-            writer.WriteLine($"\"{job.Title}\",\"{job.Company}\",\"{job.Site}\",\"{job.Location}\",\"{job.Score}\",\"{job.Link}\",\"{job.ID}\"");
+        FileLibrary.SaveHandler.SaveJobIndexLine(jobs);
+        FileLibrary.SaveHandler.SaveJobsToCsv(jobs, filepath);
     }
 }

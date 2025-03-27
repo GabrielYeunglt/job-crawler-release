@@ -70,11 +70,8 @@ public class LinkedInJobSiteParser : IJobSiteParser
         foreach (var card in jobCards)
             try
             {
-                if (card != null)
-                {
-                    ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
-                    Thread.Sleep(500);
-                }
+                ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
+                Thread.Sleep(100);
 
                 // var titleLink = card.FindElement(By.CssSelector("a[class*='job-card-list__title--link']"));
                 var titleLink = card.FindElement(By.CssSelector(config.JobTitleSelector));
@@ -126,8 +123,8 @@ public class LinkedInJobSiteParser : IJobSiteParser
         nextPageUrl = string.Empty;
         try
         {
-            var nextButton = driver.FindElement(By.CssSelector(config.NextPageButtonSelector));
-            if (nextButton != null && nextButton.Enabled)
+            var nextButton = driver.FindElement(By.CssSelector(config?.NextPageButtonSelector));
+            if (nextButton.Enabled)
             {
                 nextButton.Click();
                 return true;
@@ -160,6 +157,6 @@ public class LinkedInJobSiteParser : IJobSiteParser
             job.Error = e.Message;
         }
 
-        Thread.Sleep(new Random().Next(500, 2000));
+        Thread.Sleep(new Random().Next(500, 1000));
     }
 }

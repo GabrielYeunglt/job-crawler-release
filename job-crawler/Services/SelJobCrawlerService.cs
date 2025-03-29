@@ -9,7 +9,7 @@ namespace job_crawler.Services;
 public class SelJobCrawlerService : IDisposable
 {
     private static readonly Random random = new();
-    private readonly bool debug = true;
+    private readonly bool debug = false;
     private bool disposed;
     private readonly IWebDriver driver;
 
@@ -89,12 +89,54 @@ public class SelJobCrawlerService : IDisposable
     {
         var oldRecords = FileLibrary.SaveHandler.LoadJobIndexLine();
         var jobs = new List<Job>();
-        var indeedJobs = Crawl(new IndeedJobSiteParser(), oldRecords);
-        if (indeedJobs.Any()) jobs.AddRange(indeedJobs);
-        var linkedinJobs = Crawl(new LinkedInJobSiteParser(), oldRecords);
-        if (linkedinJobs.Any()) jobs.AddRange(linkedinJobs);
+
+        var parsers = new List<IJobSiteParser>
+        {
+            new IndeedJobSiteParser(),
+            new LinkedInJobSiteParser()
+            // Add more sites here easily
+        };
+
+        foreach (var parser in parsers)
+        {
+            try
+            {
+                Console.WriteLine($"{parser.GetType().Name} starts crawling.");
+                var siteJobs = Crawl(parser, oldRecords);
+                if (siteJobs.Any())
+                    jobs.AddRange(siteJobs);
+                Console.WriteLine($"{parser.GetType().Name} done crawling.");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"{parser.GetType().Name} encountered a problem:");
+                Console.WriteLine(e);
+            }
+        }
+
         jobs.Sort((a, b) => b.Score.CompareTo(a.Score));
-        FileLibrary.SaveHandler.SaveJobIndexLine(jobs);
-        FileLibrary.SaveHandler.SaveJobsToCsv(jobs, filepath);
+
+        try
+        {
+            Console.WriteLine("Consolidate read jobs.");
+            FileLibrary.SaveHandler.SaveJobIndexLine(jobs);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("Saving historical record encountered a problem:");
+            Console.WriteLine(e);
+        }
+
+        try
+        {
+            Console.WriteLine($"{jobs.Count} job(s) found. Output file.");
+            FileLibrary.SaveHandler.SaveJobsToCsv(jobs, filepath);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("Error saving to CSV:");
+            Console.WriteLine(e);
+            throw;
+        }
     }
 }

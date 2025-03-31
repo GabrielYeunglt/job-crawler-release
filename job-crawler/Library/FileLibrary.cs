@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml;
 using job_crawler.Models;
 
 namespace job_crawler.Library;
@@ -53,8 +54,7 @@ public class FileLibrary
 
         try
         {
-            fullPath = Path.GetFullPath(fullPath);
-
+            fullPath = Path.IsPathRooted(fullPath) ? fullPath : GetRelativePath(fullPath);
             // If it's an existing folder or ends with a slash, use default file name
             if (Directory.Exists(fullPath) || fullPath.EndsWith(Path.DirectorySeparatorChar.ToString()))
             {
@@ -78,6 +78,11 @@ public class FileLibrary
         }
 
         return isValidPath;
+    }
+
+    public static string GetRelativeToApp(string relativePath)
+    {
+        return Path.Combine(AppContext.BaseDirectory, relativePath);
     }
 
     private static string ExpandHome(string path)
@@ -228,23 +233,40 @@ public class FileLibrary
 
         public static void SaveJobIndexLine(List<Job> jobs, string path = DefaultPath)
         {
-            RetrieveFolderAndFileName(path, out var folder, out var fileName);
-            string fullpath = Path.Combine(folder, $"{fileName}-{DateTime.Now:yyyyMMdd}.csv");
-
-            // ✅ Load existing keys from index file
-            var combinedKeys = LoadJobIndexLine(fullpath);
-
-            // ✅ Add new keys from current job list
-            foreach (var job in jobs)
+            try
             {
-                combinedKeys.Add($"{job.Site}:{job.ID}");
+                RetrieveFolderAndFileName(path, out var folder, out var fileName);
+                string fullpath = Path.Combine(folder, $"{fileName}-{DateTime.Now:yyyyMMdd}.csv");
+                string fullpathPrev = Path.Combine(folder, $"{fileName}-{DateTime.Now.AddDays(-1):yyyyMMdd}.csv");
+
+                // ✅ Load existing keys from index file
+                var combinedKeys = LoadJobIndexLine(fullpath);
+                var combinedKeysPrev = LoadJobIndexLine(fullpathPrev);
+                if (combinedKeysPrev.Count > 0)
+                {
+                    combinedKeys.UnionWith(combinedKeysPrev);
+                }
+
+                // ✅ Add new keys from current job list
+                foreach (var job in jobs)
+                {
+                    combinedKeys.Add($"{job.Site}:{job.ID}");
+                }
+
+                Console.WriteLine($"Saving {jobs.Count} job(s) to {fullpath}.");
+
+                // ✅ Ensure folder exists before writing
+                Directory.CreateDirectory(folder);
+
+                using var writer = new StreamWriter(fullpath);
+                writer.WriteLine(string.Join("|", combinedKeys));
             }
-
-            // ✅ Ensure folder exists before writing
-            Directory.CreateDirectory(folder);
-
-            using var writer = new StreamWriter(fullpath);
-            writer.WriteLine(string.Join("|", combinedKeys));
+            catch (Exception e)
+            {
+                Console.WriteLine($"❌ Failed to save job index: {e.Message}");
+                Console.WriteLine(e);
+                throw;
+            }
         }
 
         public static HashSet<string> LoadJobIndexLine(string path = DefaultPath)

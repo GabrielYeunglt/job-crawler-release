@@ -1,11 +1,12 @@
 using job_crawler.Library;
 using job_crawler.Models;
 using job_crawler.Parsers;
+using job_crawler.Services;
 using job_crawler.Utils;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Support.UI;
 
-public class LinkedInJobSiteParser : IJobSiteParser
+public class LinkedInJobSiteParser : JobSiteParser
 {
     private readonly JobSiteConfig? config;
     private readonly Credentials creds;
@@ -14,10 +15,16 @@ public class LinkedInJobSiteParser : IJobSiteParser
     {
         config = FileLibrary.LoadConfig<JobSiteConfig>("Configs/linkedin.config.json");
         StartUrl = ConfigLoader.BuildUrl(config);
+        SiteName = "LinkedIn";
+        WaitTimeRange = (1000, 2000);
         creds = ConfigLoader.LoadCredentials("Configs/linkedin.config.json");
     }
 
-    public void Login(IWebDriver driver)
+    public override string StartUrl { get; init; }
+    public override string SiteName { get; init; }
+    public override (int, int) WaitTimeRange { get; init; }
+
+    public override void Login(IWebDriver driver)
     {
         driver.Navigate().GoToUrl("https://www.linkedin.com/login");
         WebDriverWait wait = new(driver, TimeSpan.FromSeconds(10));
@@ -26,7 +33,7 @@ public class LinkedInJobSiteParser : IJobSiteParser
         {
             var emailBox = wait.Until(d => d.FindElement(By.Id("username")));
             var passBox = driver.FindElement(By.Id("password"));
-            var loginButton = driver.FindElement(By.CssSelector("button[type='submit']"));
+            var loginButton = wait.Until(d => d.FindElement(By.CssSelector("button[type='submit']")));
 
             var js = (IJavaScriptExecutor)driver;
             js.ExecuteScript("document.getElementById('rememberMeOptIn-checkbox').checked = false;");
@@ -48,14 +55,11 @@ public class LinkedInJobSiteParser : IJobSiteParser
         Thread.Sleep(3000); // Let the page fully settle after login
     }
 
-
-    public string StartUrl { get; }
-
-    public List<Job> ExtractJobs(IWebDriver driver)
+    public override List<Job> ExtractJobs(IWebDriver driver, HashSet<string> jobIds)
     {
         var jobs = new List<Job>();
-
-        // var jobCards = driver.FindElements(By.CssSelector(config.JobListSelector));
+        WebDriverWait wait = new(driver, TimeSpan.FromSeconds(10));
+        Random random = new();
 
         // 1. Locate the scroll sentinel
         var sentinel = driver.FindElement(By.CssSelector(config.SentinelSelector));
@@ -66,59 +70,97 @@ public class LinkedInJobSiteParser : IJobSiteParser
         // 3. Find all job cards within the container
         var jobCards = jobListContainer.FindElements(By.XPath(config.JobCardsSelector));
 
+        foreach (var card in jobCards)
+        {
+            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
+            Thread.Sleep(100);
+        }
 
         foreach (var card in jobCards)
+        {
             try
             {
-                ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
-                Thread.Sleep(100);
+                bool success = false;
 
-                // var titleLink = card.FindElement(By.CssSelector("a[class*='job-card-list__title--link']"));
-                var titleLink = card.FindElement(By.CssSelector(config.JobTitleSelector));
-
-                // Skip cards where link or title is missing
-                var href = titleLink.GetAttribute("href");
-                // ✅ Get only the first visible title span (skip visually-hidden)
-                var titleSpan = titleLink.FindElement(By.CssSelector("span"));
-                var title = titleSpan.Text?.Trim();
-                var jobId = card.GetAttribute("data-occludable-job-id") ??
-                            card.GetAttribute("data-job-id");
-                var companySpan = card.FindElement(By.CssSelector(config.JobCompanySelector));
-                string company = companySpan.Text.Trim();
-
-
-                if (string.IsNullOrEmpty(href) || string.IsNullOrEmpty(title))
+                for (int attempt = 1; attempt <= 3; attempt++)
                 {
-                    Console.WriteLine("⚠️ Incomplete job card (no link/title), skipping.");
-                    continue;
+                    try
+                    {
+                        var titleLink = wait.Until(d => card.FindElement(By.CssSelector(config.JobTitleSelector)));
+                        var href = titleLink.GetAttribute("href");
+                        var title = titleLink.FindElement(By.CssSelector("span"))?.Text?.Trim();
+                        var jobId = card.GetAttribute("data-occludable-job-id") ?? card.GetAttribute("data-job-id");
+                        var company = card.FindElement(By.CssSelector(config.JobCompanySelector)).Text.Trim();
+
+                        if (string.IsNullOrEmpty(href) || string.IsNullOrEmpty(title))
+                        {
+                            Console.WriteLine("⚠️ Incomplete job card (no link/title), skipping.");
+                            break;
+                        }
+
+                        if (CheckJobExists(jobId, jobIds)) break;
+
+                        card.Click();
+                        Thread.Sleep(random.Next(WaitTimeRange.Item1, WaitTimeRange.Item2));
+
+                        var locationText = wait.Until(d => d.FindElement(By.ClassName(config.JobLocationSelector)))
+                            .GetAttribute("innerText");
+                        var descText = wait.Until(d => d.FindElement(By.ClassName(config.JobDescriptionSelector)))
+                            .GetAttribute("innerText");
+
+                        if (href.StartsWith("/jobs/view/"))
+                            href = "https://www.linkedin.com" + href;
+
+                        var job = new Job
+                        {
+                            Title = title,
+                            Link = href,
+                            ID = jobId,
+                            Site = "LinkedIn",
+                            Company = company,
+                            Description = descText,
+                            Location = locationText
+                        };
+                        
+                        jobs.Add(job);
+
+                        success = true;
+                        break;
+                    }
+                    catch (Exception retryEx)
+                    {
+                        Console.WriteLine($"🔁 Retry {attempt}/3 failed: {retryEx.Message}");
+
+                        if (attempt == 3)
+                        {
+                            Console.WriteLine("❌ Giving up on this card after 3 attempts.");
+                        }
+                        else
+                        {
+                            Thread.Sleep(1000); // Backoff before retry
+                        }
+                    }
                 }
 
-                // Make sure we use full LinkedIn link
-                if (href.StartsWith("/jobs/view/")) href = "https://www.linkedin.com" + href;
-
-                jobs.Add(new Job
+                if (!success)
                 {
-                    Title = title,
-                    Link = href,
-                    ID = jobId,
-                    Site = "LinkedIn",
-                    Company = company
-                });
+                    Console.WriteLine("⚠️ Failed to process job card after retries.");
+                }
             }
-            catch (NoSuchElementException)
+            catch (NoSuchElementException e)
             {
-                Console.WriteLine("⚠️ Skipping card — no job title link found.");
+                Console.WriteLine("⚠️ Skipping card — " + e.Message);
             }
             catch (Exception e)
             {
                 Console.WriteLine($"⚠️ Unexpected error while parsing card: {e.Message}");
             }
-
+        }
 
         return jobs;
     }
 
-    public bool TryGetNextPageUrl(IWebDriver driver, out string nextPageUrl)
+    public override bool TryGetNextPageUrl(IWebDriver driver, out string nextPageUrl)
     {
         nextPageUrl = string.Empty;
         try
@@ -138,25 +180,8 @@ public class LinkedInJobSiteParser : IJobSiteParser
         return false;
     }
 
-    public void EnrichJobDetails(IWebDriver driver, Job job)
+    public override void EnrichJobDetails(IWebDriver driver, Job job)
     {
-        driver.Navigate().GoToUrl(job.Link);
-        WebDriverWait wait = new(driver, TimeSpan.FromSeconds(10));
-
-        try
-        {
-            var desc = wait.Until(d =>
-                d.FindElement(By.CssSelector(config.JobDescriptionSelector)));
-            job.Description = desc.Text;
-
-            var location = driver.FindElements(By.CssSelector(config.JobLocationSelector)).FirstOrDefault()?.Text;
-            job.Location = location?.Trim();
-        }
-        catch (Exception e)
-        {
-            job.Error = e.Message;
-        }
-
-        Thread.Sleep(new Random().Next(500, 1000));
+        // logic moved to extractJobs()
     }
 }

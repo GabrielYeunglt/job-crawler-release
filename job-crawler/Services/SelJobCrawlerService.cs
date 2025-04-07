@@ -19,6 +19,7 @@ public class SelJobCrawlerService : IDisposable
         options.AddArgument("--disable-blink-features=AutomationControlled");
         options.AddArgument("--remote-allow-origins=*");
         driver = new ChromeDriver(options);
+        ((IJavaScriptExecutor)driver).ExecuteScript("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})");
         Console.WriteLine("WebDriver started.");
     }
 
@@ -48,7 +49,7 @@ public class SelJobCrawlerService : IDisposable
         do
         {
             var nextUrl = string.Empty;
-            jobs.AddRange(parser.ExtractJobs(driver));
+            jobs.AddRange(parser.ExtractJobs(driver, existingJobs));
             hasMorePages = !debug && parser.TryGetNextPageUrl(driver, out nextUrl);
 
             if (hasMorePages)
@@ -62,39 +63,39 @@ public class SelJobCrawlerService : IDisposable
                 Thread.Sleep(random.Next(3000, 7000));
             }
         } while (hasMorePages);
-
-        // Deduplicate
-        var deduplicatedJobs = jobs
-            .Where(job => !existingJobs.Contains($"{job.Site}:{job.ID}"))
-            .ToList();
-
-
-        foreach (var job in deduplicatedJobs)
+        
+        foreach (var job in jobs)
         {
-            parser.EnrichJobDetails(driver, job);
             analyzeService.AnalyzeJob(job);
-            if (debug)
-            {
-                break;
-            }
-
-            Thread.Sleep(random.Next(1000, 5000));
         }
 
-        deduplicatedJobs.Sort((a, b) => b.Score.CompareTo(a.Score));
-        return deduplicatedJobs;
+        jobs.Sort((a, b) => b.Score.CompareTo(a.Score));
+        return jobs;
     }
 
-    public void Crawl(string filepath = "crawled")
+    public void Crawl(string filepath = "crawled", StaticValue.JobSites jobSites = StaticValue.JobSites.All)
     {
-        var oldRecords = FileLibrary.SaveHandler.LoadJobIndexLine();
+        var (prevDayRec, samedayRec) = FileLibrary.SaveHandler.LoadJobIndexRecords();
+        var oldRecords = prevDayRec.Union(samedayRec).ToHashSet();
         var jobs = new List<Job>();
 
-        var parsers = new List<IJobSiteParser>
+        var parsers = jobSites switch
         {
-            new IndeedJobSiteParser(),
-            new LinkedInJobSiteParser()
-            // Add more sites here easily
+            StaticValue.JobSites.All => new List<IJobSiteParser>
+            {
+                new IndeedJobSiteParser(),
+                new LinkedInJobSiteParser()
+                // Add more sites here easily
+            },
+            StaticValue.JobSites.Indeed => new List<IJobSiteParser>
+            {
+                new IndeedJobSiteParser()
+            },
+            StaticValue.JobSites.LinkedIn => new List<IJobSiteParser>
+            {
+                new LinkedInJobSiteParser()
+            },
+            _ => new List<IJobSiteParser>()
         };
 
         foreach (var parser in parsers)
@@ -119,7 +120,7 @@ public class SelJobCrawlerService : IDisposable
         try
         {
             Console.WriteLine("Consolidate read jobs.");
-            FileLibrary.SaveHandler.SaveJobIndexLine(jobs);
+            FileLibrary.SaveHandler.SaveJobIndexLine(jobs, samedayRec);
         }
         catch (Exception e)
         {
@@ -138,5 +139,36 @@ public class SelJobCrawlerService : IDisposable
             Console.WriteLine(e);
             throw;
         }
+    }
+
+    public void CrawlSingleJob(string url)
+    {
+        if (string.IsNullOrEmpty(url)) throw new ArgumentNullException(nameof(url));
+        StaticValue.JobSites site = JobAnalyzeService.GetJobSiteTypeFromUrl(url);
+
+        IJobSiteParser parser = site switch
+        {
+            StaticValue.JobSites.LinkedIn => new LinkedInJobSiteParser(),
+            StaticValue.JobSites.Indeed => new IndeedJobSiteParser(),
+            _ => throw new NotSupportedException()
+        };
+
+        parser.Login(driver);
+
+        var analyzeService = new JobAnalyzeService();
+
+        Job job = new();
+        job.ID = JobAnalyzeService.GetJobIdFromUrl(url);
+        job.Link = url;
+        job.Site = site switch
+        {
+            StaticValue.JobSites.Indeed => "Indeed",
+            StaticValue.JobSites.LinkedIn => "LinkedIn",
+        };
+
+        parser.EnrichJobDetails(driver, job);
+        analyzeService.AnalyzeJob(job);
+
+        Console.WriteLine($"Analyzing finished, score: {job.Score}");
     }
 }

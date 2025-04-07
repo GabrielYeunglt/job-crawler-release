@@ -30,10 +30,33 @@ public class JobAnalyzeService
         job.Score = titleScore + descScore;
     }
 
-    public string GetJobIdFromUrl(string url)
+    public static string GetJobIdFromUrl(string url)
     {
+        StaticValue.JobSites site = GetJobSiteTypeFromUrl(url);
         var uri = new Uri(url);
-        var query = HttpUtility.ParseQueryString(uri.Query);
-        return query["jk"]; // Extracts the 'jk' parameter value
+        switch (site)
+        {
+            case StaticValue.JobSites.Indeed:
+                var query = HttpUtility.ParseQueryString(uri.Query);
+                return query["jk"]; // Extracts the 'jk' parameter value
+            case StaticValue.JobSites.LinkedIn:
+                var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                return (segments.Length >= 3 && segments[1] == "view") ? segments[2] : "";
+            default:
+                return null;
+        }
+    }
+
+    public static StaticValue.JobSites GetJobSiteTypeFromUrl(string url)
+    {
+        if (string.IsNullOrEmpty(url)) throw new ArgumentNullException("url");
+        url = url.ToLower();
+        StaticValue.JobSites site = url switch
+        {
+            var u when u.Contains("indeed", StringComparison.OrdinalIgnoreCase) => StaticValue.JobSites.Indeed,
+            var u when u.Contains("linkedin", StringComparison.OrdinalIgnoreCase) => StaticValue.JobSites.LinkedIn,
+            _ => throw new NotSupportedException("Unknown job site")
+        };
+        return site;
     }
 }

@@ -7,52 +7,48 @@ using OpenQA.Selenium.Support.UI;
 
 namespace job_crawler.Parsers;
 
-public class IndeedJobSiteParser : IJobSiteParser
+public class IndeedJobSiteParser : JobSiteParser
 {
-    private readonly JobAnalyzeService analyzeService;
     private readonly JobSiteConfig? config;
 
     public IndeedJobSiteParser()
     {
         config = FileLibrary.LoadConfig<JobSiteConfig>("Configs/indeed.config.json");
         StartUrl = ConfigLoader.BuildUrl(config);
-        analyzeService = new JobAnalyzeService();
+        SiteName = "Indeed";
+        WaitTimeRange = (500, 3000);
     }
 
-    public void Login(IWebDriver driver)
+    public override string StartUrl { get; init; }
+    public override string SiteName { get; init; }
+    public override (int, int) WaitTimeRange { get; init; }
+
+    public override void Login(IWebDriver driver)
     {
-        // No need to login
+        // No need to login, but let it load a while
+        Thread.Sleep(new Random().Next(WaitTimeRange.Item1, WaitTimeRange.Item2));
     }
 
-    public string StartUrl { get; }
-
-    // public List<Job> ExtractJobs(IWebDriver driver)
-    // {
-    //     var jobs = new List<Job>();
-    //     var jobElements = driver.FindElements(By.XPath(config.JobTitleSelector));
-    //
-    //     foreach (var job in jobElements)
-    //     {
-    //         var link = job.GetAttribute("href");
-    //         jobs.Add(new Job
-    //         {
-    //             Title = job.Text,
-    //             Link = link,
-    //             ID = analyzeService.GetJobIdFromUrl(link),
-    //             Site = "Indeed"
-    //         });
-    //     }
-    //
-    //     return jobs;
-    // }
-    public List<Job> ExtractJobs(IWebDriver driver)
+    public override List<Job> ExtractJobs(IWebDriver driver, HashSet<string> jobIds)
     {
         var jobs = new List<Job>();
-        var jobElements = driver.FindElements(By.XPath(config.JobTitleSelector));
+        var random = new Random();
+        var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(random.Next(10)));
+        var jobCards = driver.FindElements(By.XPath(config.JobTitleSelector));
 
-        foreach (var job in jobElements)
+        foreach (var card in jobCards)
+        {
+            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
+            Thread.Sleep(100);
+        }
+
+        foreach (var job in jobCards)
         {
             var link = job.GetAttribute("href");
+            var jobId = JobAnalyzeService.GetJobIdFromUrl(link);
+
+            if (CheckJobExists(jobId, jobIds))
+                continue;
 
             // 🔍 Find parent job card to look for company and location
             IWebElement jobCard = null;
@@ -73,7 +69,9 @@ public class IndeedJobSiteParser : IJobSiteParser
                 var companyElement = jobCard.FindElement(By.CssSelector("span[data-testid='company-name']"));
                 company = companyElement.Text.Trim();
             }
-            catch (NoSuchElementException) { }
+            catch (NoSuchElementException)
+            {
+            }
 
             // 📍 Extract location
             string location = "";
@@ -82,16 +80,28 @@ public class IndeedJobSiteParser : IJobSiteParser
                 var locationElement = jobCard.FindElement(By.CssSelector("div[data-testid='text-location']"));
                 location = locationElement.Text.Trim();
             }
-            catch (NoSuchElementException) { }
+            catch (NoSuchElementException)
+            {
+            }
 
+            job.Click();
+            Thread.Sleep(random.Next(WaitTimeRange.Item1, WaitTimeRange.Item2));
+
+            var card = wait.Until(d => d.FindElement(By.ClassName("jobsearch-JobComponent-description")));
+            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
+            
+            var descText = wait.Until(d => card.FindElement(By.Id(config.JobDescriptionSelector)))
+                .GetAttribute("innerText");
+            
             jobs.Add(new Job
             {
                 Title = job.Text,
                 Link = link,
-                ID = analyzeService.GetJobIdFromUrl(link),
+                ID = jobId,
                 Site = "Indeed",
                 Company = company,
-                Location = location
+                Location = location,
+                Description = descText,
             });
         }
 
@@ -99,7 +109,7 @@ public class IndeedJobSiteParser : IJobSiteParser
     }
 
 
-    public bool TryGetNextPageUrl(IWebDriver driver, out string nextPageUrl)
+    public override bool TryGetNextPageUrl(IWebDriver driver, out string nextPageUrl)
     {
         nextPageUrl = string.Empty;
         try
@@ -119,22 +129,8 @@ public class IndeedJobSiteParser : IJobSiteParser
         return false;
     }
 
-    public void EnrichJobDetails(IWebDriver driver, Job job)
+    public override void EnrichJobDetails(IWebDriver driver, Job job)
     {
-        driver.Navigate().GoToUrl(job.Link);
-        WebDriverWait wait = new(driver, TimeSpan.FromSeconds(10));
-
-        try
-        {
-            var desc = wait.Until(d => d.FindElements(By.Id(config.JobDescriptionSelector)));
-
-            job.Description = desc.FirstOrDefault()?.Text;
-        }
-        catch (Exception e)
-        {
-            job.Error = e.Message;
-        }
-
-        Thread.Sleep(new Random().Next(500, 3000));
+        // logic moved to extractJobs()
     }
 }

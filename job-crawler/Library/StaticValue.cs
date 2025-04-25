@@ -2,17 +2,14 @@ using job_crawler.Models;
 
 namespace job_crawler.Library;
 
-/// <summary>
-///     TODO: For temp use, switch to ENV_VAR
-/// </summary>
 public struct StaticValue
 {
-    public struct Indeed
+    public enum JobSites
     {
-        public static string JobTitleDataTestId = "JobTitle";
-        public static string NextPageButtonDataTestId = "pagination-page-next";
-        public static string JobLocationId = "jobLocationText";
-        public static string JobDescriptionId = "jobDescriptionText";
+        All,
+        Indeed,
+        LinkedIn,
+        Glassdoor
     }
 
 

@@ -17,11 +17,13 @@ public class IndeedJobSiteParser : JobSiteParser
         StartUrl = ConfigLoader.BuildUrl(config);
         SiteName = "Indeed";
         WaitTimeRange = (500, 3000);
+        Site = StaticValue.JobSites.Indeed;
     }
 
     public override string StartUrl { get; init; }
     public override string SiteName { get; init; }
     public override (int, int) WaitTimeRange { get; init; }
+    public override StaticValue.JobSites Site { get; init; }
 
     public override void Login(IWebDriver driver)
     {
@@ -38,7 +40,7 @@ public class IndeedJobSiteParser : JobSiteParser
 
         foreach (var card in jobCards)
         {
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
+            ScrollTo(driver, card);
             Thread.Sleep(100);
         }
 
@@ -88,7 +90,7 @@ public class IndeedJobSiteParser : JobSiteParser
             Thread.Sleep(random.Next(WaitTimeRange.Item1, WaitTimeRange.Item2));
 
             var card = wait.Until(d => d.FindElement(By.ClassName("jobsearch-JobComponent-description")));
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'end'})", card);
+            ScrollTo(driver, card);
             
             var descText = wait.Until(d => card.FindElement(By.Id(config.JobDescriptionSelector)))
                 .GetAttribute("innerText");

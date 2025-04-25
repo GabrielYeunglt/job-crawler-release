@@ -79,23 +79,17 @@ public class SelJobCrawlerService : IDisposable
         var oldRecords = prevDayRec.Union(samedayRec).ToHashSet();
         var jobs = new List<Job>();
 
+        var allParsers = new List<IJobSiteParser>
+        {
+            new IndeedJobSiteParser(),
+            new LinkedInJobSiteParser(),
+            new GlassdoorJobSiteParser()
+        };
+
         var parsers = jobSites switch
         {
-            StaticValue.JobSites.All => new List<IJobSiteParser>
-            {
-                new IndeedJobSiteParser(),
-                new LinkedInJobSiteParser()
-                // Add more sites here easily
-            },
-            StaticValue.JobSites.Indeed => new List<IJobSiteParser>
-            {
-                new IndeedJobSiteParser()
-            },
-            StaticValue.JobSites.LinkedIn => new List<IJobSiteParser>
-            {
-                new LinkedInJobSiteParser()
-            },
-            _ => new List<IJobSiteParser>()
+            StaticValue.JobSites.All => allParsers,
+            _ => allParsers.Where(p => p.Site == jobSites).ToList()
         };
 
         foreach (var parser in parsers)
@@ -115,6 +109,9 @@ public class SelJobCrawlerService : IDisposable
             }
         }
 
+        // Deduplicate
+        jobs = jobs.Distinct().ToList();
+        // Sort
         jobs.Sort((a, b) => b.Score.CompareTo(a.Score));
 
         try

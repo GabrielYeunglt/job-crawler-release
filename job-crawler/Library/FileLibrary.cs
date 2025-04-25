@@ -1,107 +1,49 @@
 using System.Text.Json;
 using System.Xml;
 using job_crawler.Models;
+using OpenQA.Selenium.DevTools.V131.Console;
 
 namespace job_crawler.Library;
 
 public class FileLibrary
 {
-    public readonly static string DEFAULT_PATH = "~/Documents/jobs/";
-    public readonly static string DEFAULT_FILENAME = "crawled-job";
+    public readonly static string DefaultOutputDirectory = "~/Documents/jobs/";
+    public readonly static string DefaultFileName = "crawled-job";
 
     public static string AskForFilePath()
     {
-        var isValidPath = false;
-        var folder = "";
-        var fileName = "";
-
-        while (!isValidPath)
+        while (true)
         {
             Console.Write("Enter the full path to save the file (with or without filename): ");
-            var fullPath = Console.ReadLine()?.Trim() ?? "";
+            var input = Console.ReadLine()?.Trim();
 
-            if (string.IsNullOrWhiteSpace(fullPath))
+            if (string.IsNullOrWhiteSpace(input))
             {
-                Console.WriteLine("Default path would be used. ~/Documents/jobs/");
-                fullPath = DEFAULT_PATH;
+                Console.WriteLine("ℹ️ Default path will be used: ~/Documents/jobs/");
+                input = DefaultOutputDirectory;
             }
 
-            isValidPath = RetrieveFolderAndFileName(fullPath, out folder, out fileName);
-        }
-
-        var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-        var finalFileName = $"{fileName}-{timestamp}.csv";
-        return Path.Combine(folder, finalFileName);
-    }
-
-    private static bool CheckAndCreateDirectory(string path)
-    {
-        bool exists = Directory.Exists(path);
-        if (exists) return exists;
-        Console.WriteLine("⚠️ Folder does not exist. Creating it...");
-        Directory.CreateDirectory(path);
-        return exists;
-    }
-
-    private static bool RetrieveFolderAndFileName(string path, out string folder, out string fileName)
-    {
-        bool isValidPath = false;
-        folder = string.Empty;
-        fileName = string.Empty;
-
-        // Expand ~ to home directory if needed
-        string fullPath = ExpandHome(path);
-
-        try
-        {
-            fullPath = Path.IsPathRooted(fullPath) ? fullPath : GetRelativePath(fullPath);
-            // If it's an existing folder or ends with a slash, use default file name
-            if (Directory.Exists(fullPath) || fullPath.EndsWith(Path.DirectorySeparatorChar.ToString()))
+            try
             {
-                folder = fullPath;
-                fileName = DEFAULT_FILENAME;
+                var (folder, fileName) = PathHelper.SplitFolderAndFile(input, DefaultFileName);
+                Directory.CreateDirectory(folder);
+
+                var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+                var finalFileName = $"{fileName}-{timestamp}.csv";
+
+                return Path.Combine(folder, finalFileName);
             }
-            else
+            catch (Exception ex)
             {
-                folder = Path.GetDirectoryName(fullPath) ?? "";
-                fileName = Path.GetFileName(fullPath);
+                Console.WriteLine("❌ Invalid path entered:");
+                Console.WriteLine(ex.Message);
             }
-
-            CheckAndCreateDirectory(folder);
-
-            isValidPath = true;
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Invalid path: {ex.Message}");
-            isValidPath = false;
-        }
-
-        return isValidPath;
-    }
-
-    public static string GetRelativeToApp(string relativePath)
-    {
-        return Path.Combine(AppContext.BaseDirectory, relativePath);
-    }
-
-    private static string ExpandHome(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return path;
-
-        if (path.StartsWith("~"))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home,
-                path.Substring(1).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        }
-
-        return path;
     }
 
     public static T? LoadConfig<T>(string path)
     {
-        var json = File.ReadAllText(GetRelativePath(path));
+        var json = File.ReadAllText(PathHelper.Resolve(path));
 
         JsonSerializerOptions? options = new JsonSerializerOptions
         {
@@ -111,15 +53,10 @@ public class FileLibrary
         return JsonSerializer.Deserialize<T>(json, options);
     }
 
-    private static string GetRelativePath(string path)
-    {
-        return Path.Combine(AppContext.BaseDirectory, path);
-    }
-
     public static List<string> GetCsvFilesFromDirectory(string folderPath)
     {
         var csvFiles = new List<string>();
-        folderPath = ExpandHome(folderPath);
+        folderPath = PathHelper.Resolve(folderPath);
 
         if (!Directory.Exists(folderPath))
         {
@@ -144,6 +81,8 @@ public class FileLibrary
     {
         var jobs = new List<Job>();
 
+        path = PathHelper.Resolve(path);
+
         if (!File.Exists(path))
         {
             Console.WriteLine($"❌ File not found: {path}");
@@ -157,7 +96,7 @@ public class FileLibrary
             string? headerLine = reader.ReadLine(); // read actual CSV header
             if (headerLine == null) return jobs;
 
-            var headers = ParseCsvLine(headerLine);
+            var headers = CsvHelper.ParseLine(headerLine);
             var headerMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
             for (int i = 0; i < headers.Count; i++)
@@ -170,17 +109,17 @@ public class FileLibrary
                 var line = reader.ReadLine();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                var fields = ParseCsvLine(line);
+                var fields = CsvHelper.ParseLine(line);
                 if (fields.Count < headers.Count) continue; // skip malformed lines
 
                 jobs.Add(new Job
                 {
-                    Title = GetField(fields, headerMap, "Title"),
-                    Company = GetField(fields, headerMap, "Company"),
-                    Site = GetField(fields, headerMap, "Site"),
-                    Location = GetField(fields, headerMap, "Location"),
-                    Link = GetField(fields, headerMap, "Link"),
-                    ID = GetField(fields, headerMap, "ID"),
+                    Title = CsvHelper.GetField(fields, headerMap, "Title"),
+                    Company = CsvHelper.GetField(fields, headerMap, "Company"),
+                    Site = CsvHelper.GetField(fields, headerMap, "Site"),
+                    Location = CsvHelper.GetField(fields, headerMap, "Location"),
+                    Link = CsvHelper.GetField(fields, headerMap, "Link"),
+                    ID = CsvHelper.GetField(fields, headerMap, "ID"),
                 });
             }
         }
@@ -192,74 +131,34 @@ public class FileLibrary
         return jobs;
     }
 
-    // Helper to get a value by column name
-    private static string GetField(List<string> fields, Dictionary<string, int> map, string key)
-    {
-        return map.TryGetValue(key, out int index) && index < fields.Count
-            ? fields[index].Trim()
-            : "";
-    }
-
-    private static List<string> ParseCsvLine(string line)
-    {
-        var fields = new List<string>();
-        var current = "";
-        bool inQuotes = false;
-
-        foreach (char c in line)
-        {
-            switch (c)
-            {
-                case '\"':
-                    inQuotes = !inQuotes;
-                    break;
-                case ',' when !inQuotes:
-                    fields.Add(current.Trim());
-                    current = "";
-                    break;
-                default:
-                    current += c;
-                    break;
-            }
-        }
-
-        fields.Add(current.Trim()); // add last field
-        return fields;
-    }
-
     public static class SaveHandler
     {
-        public const string DefaultPath = "history/save";
+        public const string DefaultSaveDirectory = "history/";
+        public const string DefaultSaveFileName = "save";
+        public const string DefaultSavePath = DefaultSaveDirectory + DefaultSaveFileName;
 
-        public static void SaveJobIndexLine(List<Job> jobs, string path = DefaultPath)
+        public static void SaveJobIndexLine(List<Job> jobs, HashSet<string> prevJobs, string path = DefaultSavePath)
         {
             try
             {
-                RetrieveFolderAndFileName(path, out var folder, out var fileName);
-                string fullpath = Path.Combine(folder, $"{fileName}-{DateTime.Now:yyyyMMdd}.csv");
-                string fullpathPrev = Path.Combine(folder, $"{fileName}-{DateTime.Now.AddDays(-1):yyyyMMdd}.csv");
-
-                // ✅ Load existing keys from index file
-                var combinedKeys = LoadJobIndexLine(fullpath);
-                var combinedKeysPrev = LoadJobIndexLine(fullpathPrev);
-                if (combinedKeysPrev.Count > 0)
-                {
-                    combinedKeys.UnionWith(combinedKeysPrev);
-                }
+                var (folder, fileName) = PathHelper.SplitFolderAndFile(path, DefaultSaveFileName);
+                Directory.CreateDirectory(folder);
+                var fullpath = Path.Combine(folder, $"{fileName}-{DateTime.Now:yyyyMMdd}.csv");
 
                 // ✅ Add new keys from current job list
                 foreach (var job in jobs)
                 {
-                    combinedKeys.Add($"{job.Site}:{job.ID}");
+                    prevJobs.Add($"{job.Site}:{job.ID}");
                 }
 
-                Console.WriteLine($"Saving {jobs.Count} job(s) to {fullpath}.");
+                Console.WriteLine(
+                    $"Saving {jobs.Count} job(s) to {fullpath}. Total jobs found today: {prevJobs.Count}");
 
                 // ✅ Ensure folder exists before writing
                 Directory.CreateDirectory(folder);
 
                 using var writer = new StreamWriter(fullpath);
-                writer.WriteLine(string.Join("|", combinedKeys));
+                writer.WriteLine(string.Join("|", prevJobs));
             }
             catch (Exception e)
             {
@@ -269,16 +168,39 @@ public class FileLibrary
             }
         }
 
-        public static HashSet<string> LoadJobIndexLine(string path = DefaultPath)
+        public static (HashSet<string> prevDayRec, HashSet<string> samedayRec) LoadJobIndexRecords()
         {
-            if (string.Equals(path, DefaultPath, StringComparison.OrdinalIgnoreCase))
-            {
-                path = $"{DefaultPath}-{DateTime.Now:yyyyMMdd}.csv";
-            }
+            var samedayFile = $"{DefaultSavePath}-{DateTime.Now:yyyyMMdd}.csv";
+            var sameDayHash = LoadJobIndexFile(samedayFile);
+
+            var latestFile = Directory
+                .GetFiles(PathHelper.Resolve(DefaultSaveDirectory))
+                .Where(f => Path.GetFileName(f).StartsWith(DefaultSaveFileName) && !string.Equals(Path.GetFileName(f), Path.GetFileName(samedayFile)))
+                .OrderByDescending(File.GetCreationTimeUtc)
+                .FirstOrDefault();
+
+            var prevDayHash = latestFile != null
+                ? LoadJobIndexFile(latestFile)
+                : new HashSet<string>();
+
+            if (latestFile == null)
+                Console.WriteLine("⚠️ Previous records not found.");
+
+            return (prevDayHash, sameDayHash);
+        }
+
+        public static HashSet<string> LoadJobIndexFile(string path = DefaultSavePath)
+        {
+            path = PathHelper.Resolve(path);
+            Console.WriteLine($"📂 Loading records: {path}");
 
             var set = new HashSet<string>();
 
-            if (!File.Exists(path)) return set;
+            if (!File.Exists(path))
+            {
+                Console.WriteLine("⚠️ File not found.");
+                return set;
+            }
 
             var content = File.ReadAllText(path);
             var parts = content.Split('|', StringSplitOptions.RemoveEmptyEntries);
@@ -286,25 +208,37 @@ public class FileLibrary
             foreach (var part in parts)
                 set.Add(part.Trim());
 
+            Console.WriteLine($"✅ Loaded {set.Count} records.");
             return set;
         }
 
         public static void SaveJobsToCsv(List<Job> jobs, string filename)
         {
-            if (string.IsNullOrEmpty(filename)) filename = DEFAULT_FILENAME;
+            if (string.IsNullOrEmpty(filename)) filename = DefaultFileName;
             using var writer = new StreamWriter(filename);
             writer.WriteLine($"{DateTime.Now:yyyy-MM-ddHH:mm:ss}");
             writer.WriteLine("Title,Company,Site,Location,Score,Link,ID");
 
             foreach (var job in jobs)
-                writer.WriteLine(
-                    $"\"{job.Title}\",\"{job.Company}\",\"{job.Site}\",\"{job.Location}\",\"{job.Score}\",\"{job.Link}\",\"{job.ID}\"");
+            {
+                var fields = new[]
+                {
+                    CsvHelper.Escape(job.Title),
+                    CsvHelper.Escape(job.Company),
+                    job.Site,
+                    CsvHelper.Escape(job.Location),
+                    job.Score.ToString("F2"),
+                    CsvHelper.Escape(job.Link),
+                    job.ID
+                };
+                writer.WriteLine(string.Join(',', fields));
+            }
         }
 
         public static void SaveOldRecToSave()
         {
             List<Job> oldRecords = new();
-            var existingFiles = GetCsvFilesFromDirectory(DEFAULT_PATH);
+            var existingFiles = GetCsvFilesFromDirectory(DefaultOutputDirectory);
             foreach (var file in existingFiles)
             {
                 var records = ReadJobsFromCsv(file);
@@ -313,7 +247,71 @@ public class FileLibrary
 
             oldRecords = oldRecords.Distinct().ToList();
 
-            SaveJobIndexLine(oldRecords);
+            SaveJobIndexLine(oldRecords, new HashSet<string>());
         }
+    }
+
+    public static class PathHelper
+    {
+        public static string ExpandHome(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return path;
+            return path.StartsWith("~")
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    path[1..].TrimStart(Path.DirectorySeparatorChar))
+                : path;
+        }
+
+        public static string Resolve(string inputPath)
+        {
+            var expanded = ExpandHome(inputPath);
+            return Path.IsPathRooted(expanded)
+                ? Path.GetFullPath(expanded)
+                : Path.Combine(AppContext.BaseDirectory, expanded);
+        }
+
+        public static (string folder, string fileName) SplitFolderAndFile(string fullPath, string defaultFileName)
+        {
+            var resolved = Resolve(fullPath);
+            if (Directory.Exists(resolved) || resolved.EndsWith(Path.DirectorySeparatorChar))
+                return (resolved, defaultFileName);
+
+            return (Path.GetDirectoryName(resolved) ?? "", Path.GetFileName(resolved));
+        }
+    }
+
+    public static class CsvHelper
+    {
+        public static List<string> ParseLine(string line)
+        {
+            var fields = new List<string>();
+            var current = "";
+            bool inQuotes = false;
+
+            foreach (char c in line)
+            {
+                if (c == '\"') inQuotes = !inQuotes;
+                else if (c == ',' && !inQuotes)
+                {
+                    fields.Add(current.Trim());
+                    current = "";
+                }
+                else current += c;
+            }
+
+            fields.Add(current.Trim());
+            return fields;
+        }
+
+        // Helper to get a value by column name
+        internal static string GetField(List<string> fields, Dictionary<string, int> map, string key)
+        {
+            return map.TryGetValue(key, out int index) && index < fields.Count
+                ? fields[index].Trim()
+                : "";
+        }
+
+        public static string Escape(string value) =>
+            string.IsNullOrEmpty(value) ? string.Empty : $"\"{value.Replace("\"", "\"\"")}\"";
     }
 }
